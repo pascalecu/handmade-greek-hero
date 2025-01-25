@@ -8,8 +8,11 @@ uses
   Winapi.Windows,
   Winapi.Messages;
 
-function WindowProc(Window: HWND; Msg: UINT; WParam: WParam; LParam: LParam)
-  : LRESULT; stdcall;
+var
+  Running: Boolean;
+
+function WindowProc(Window: HWND; Msg: UINT; WParam: WParam; LParam: LParam):
+  LRESULT; stdcall;
 var
   DeviceContext: HDC;
   Paint: TPaintStruct;
@@ -69,8 +72,7 @@ var
   WindowClass: TWndClassEx;
 
 begin
-  var
-  InstanceHandle := GetModuleHandle(nil);
+  var InstanceHandle := GetModuleHandle(nil);
 
   ZeroMemory(@WindowClass, SizeOf(WindowClass));
 
@@ -79,7 +81,7 @@ begin
     cbSize := SizeOf(WindowClass);
     Style := CS_HREDRAW or CS_VREDRAW or CS_OWNDC;
     lpfnWndProc := @WindowProc;
-    hInstance := InstanceHandle;
+    HInstance := InstanceHandle;
     lpszClassName := 'HandmadeHeroWndClass';
   end;
 
@@ -89,10 +91,9 @@ begin
     Exit;
   end;
 
-  var
-  WindowHandle := CreateWindowEx(0, WindowClass.lpszClassName, 'Handmade Hero',
-    WS_OVERLAPPEDWINDOW or WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT,
-    CW_USEDEFAULT, CW_USEDEFAULT, 0, 0, InstanceHandle, nil);
+  var WindowHandle := CreateWindowEx(0, WindowClass.lpszClassName,
+    'Handmade Hero', WS_OVERLAPPEDWINDOW or WS_VISIBLE, CW_USEDEFAULT,
+    CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, 0, 0, InstanceHandle, nil);
 
   if WindowHandle = 0 then
   begin
@@ -106,5 +107,5 @@ begin
     TranslateMessage(Msg);
     DispatchMessage(Msg);
   end;
-
 end.
+
