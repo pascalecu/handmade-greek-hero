@@ -1,4 +1,4 @@
-program HMH;
+﻿program HMH;
 
 {$APPTYPE GUI}
 {$R *.res}
@@ -28,6 +28,7 @@ begin
     WM_DESTROY:
       begin
         OutputDebugString('WM_DESTROY' + sLineBreak);
+        Running := False;
         PostQuitMessage(0);
         Result := 0;
       end;
@@ -101,9 +102,15 @@ begin
     Exit;
   end;
 
+  Running := True;
+
   var Msg: TMsg;
-  while GetMessage(Msg, 0, 0, 0) do
+  while Running do
   begin
+    var HasQuit := not GetMessage(Msg, 0, 0, 0);
+    if HasQuit then
+      Break;
+
     TranslateMessage(Msg);
     DispatchMessage(Msg);
   end;
