@@ -204,12 +204,14 @@ begin
   var Msg: TMsg;
   while Running do
   begin
-    var HasQuit := not GetMessage(Msg, 0, 0, 0);
-    if HasQuit then
-      Break;
+    while PeekMessage(Msg, 0, 0, 0, PM_REMOVE) do
+    begin
+      if Msg.message = WM_QUIT then
+        Running := False;
 
-    TranslateMessage(Msg);
-    DispatchMessage(Msg);
+      TranslateMessage(Msg);
+      DispatchMessage(Msg);
+    end;
   end;
 
   if BmpMemory <> nil then
