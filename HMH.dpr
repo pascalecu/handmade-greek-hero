@@ -22,13 +22,32 @@ begin
   {$ENDIF}
 end;
 
-function GetClientRectangle(Handle: HWND): TRect;
+function AllocateMemory(Size: UInt64): Pointer;
+begin
+  if Size = 0 then
+    Exit(nil);
+
+  Result := VirtualAlloc(nil, Size, MEM_COMMIT, PAGE_READWRITE);
+  if Result = nil then
+  begin
+    DebugLog('Error: Failed to allocate memory.');
+    MessageBox(0, 'Failed to allocate memory. The application will terminate.',
+      'Memory Allocation Error', MB_ICONERROR);
+    Halt(1);
+  end;
+end;
+
+procedure FreeMemory(MemPtr: Pointer);
+begin
+  if MemPtr <> nil then
+    VirtualFree(MemPtr, 0, MEM_RELEASE);
+end;
+
+function GetClientRectangle(Handle: hwnd): TRect;
 var
   Rect: TRect;
-  Succesful: LongBool;
 begin
-  Succesful := GetClientRect(Handle, Rect);
-  if not Succesful then
+  if not GetClientRect(Handle, Rect) then
     OutputDebugString('GetClientRectangle: Couldn''t retrieve client size');
 
   Result := Rect;
@@ -38,8 +57,7 @@ procedure Win32ResizeDIBSection(Width, Height: Integer);
 const
   BytesPerPixel = 4;
 begin
-  if BmpMemory <> nil then
-    VirtualFree(BmpMemory, 0, MEM_RELEASE);
+  FreeMemory(BmpMemory);
 
   BitmapWidth := Width;
   BitmapHeight := Height;
@@ -55,15 +73,14 @@ begin
     biCompression := BI_RGB;
   end;
 
-  BmpMemory := VirtualAlloc(nil, BitmapWidth * BitmapHeight * BytesPerPixel,
-    MEM_COMMIT, PAGE_READWRITE);
+  BmpMemory := AllocateMemory(BitmapWidth * BitmapHeight * BytesPerPixel);
 
   var Pitch := Width * BytesPerPixel;
 
   var Row := PByte(BmpMemory);
   for var Y := 0 to Pred(BitmapHeight) do
   begin
-    var Pixel := PByte(Row);
+    var Pixel := Row;
     for var X := 0 to Pred(BitmapWidth) do
     begin
       Pixel^ := X and $FF;
@@ -78,27 +95,64 @@ begin
       Pixel^ := $00;
       Inc(Pixel);
     end;
-    Row := Row + Pitch;
+    Inc(Row, Pitch);
   end;
 
   DebugLog(Format('DIB Section created (%dx%d).', [Width, Height]));
 end;
 
-procedure Win32UpdateWindow(DeviceContext: HDC; WindowRect: TRect; Top, Left,
-  Width, Height: Integer);
+procedure Win32ResizeBitmapIfNeeded(NewWidth, NewHeight: Integer);
+const
+  BytesPerPixel = 4;
 var
-  WindowWidth, WindowHeight: Integer;
+  NewMemory: Pointer;
 begin
-  WindowWidth := WindowRect.Right - WindowRect.Left;
-  WindowHeight := WindowRect.Bottom - WindowRect.Top;
-  if BmpMemory <> nil then
-    StretchDIBits(DeviceContext, 0, 0, BitmapWidth, BitmapHeight, 0, 0,
-      WindowWidth, WindowHeight, BmpMemory, BmpInfo, DIB_RGB_COLORS, SRCCOPY)
-  else
-    DebugLog('Win32UpdateWindow: Bitmap memory is nil. Update skipped.');
+  if (BitmapWidth <> NewWidth) or (BitmapHeight <> NewHeight) then
+  begin
+    FreeMemory(BmpMemory);
+
+    BitmapWidth := NewWidth;
+    BitmapHeight := NewHeight;
+
+    NewMemory := AllocateMemory(NewWidth * NewHeight * BytesPerPixel);
+
+    BmpMemory := NewMemory;
+
+    DebugLog(Format('Win32ResizeBitmapIfNeeded: Bitmap resized to %dx%d.', [NewWidth,
+      NewHeight]));
+  end;
 end;
 
-function WindowProc(Window: HWND; Msg: UINT; WParam: WParam; LParam: LParam):
+procedure Win32UpdateWindow(DeviceContext: HDC; ClientRect: TRect; Top, Left,
+  Width, Height: Integer);
+var
+  ClientWidth, ClientHeight: Integer;
+begin
+  ClientWidth := ClientRect.Right - ClientRect.Left;
+  ClientHeight := ClientRect.Bottom - ClientRect.Top;
+
+  Win32ResizeBitmapIfNeeded(ClientWidth, ClientHeight);
+
+  if (ClientWidth <= 0) or (ClientHeight <= 0) then
+  begin
+    DebugLog('Win32UpdateWindow: Invalid window size. Update skipped.');
+    Exit;
+  end;
+
+  if BmpMemory = nil then
+  begin
+    DebugLog('Win32UpdateWindow: Bitmap memory is nil. Update skipped.');
+    Exit;
+  end;
+
+  DebugLog(Format('Updating window to (%dx%d) from bitmap (%dx%d).', [ClientWidth,
+    ClientHeight, BitmapWidth, BitmapHeight]));
+
+  StretchDIBits(DeviceContext, 0, 0, ClientWidth, ClientHeight, 0, 0,
+    BitmapWidth, BitmapHeight, BmpMemory, BmpInfo, DIB_RGB_COLORS, SRCCOPY);
+end;
+
+function WindowProc(Window: hwnd; Msg: UINT; WParam: WParam; LParam: LParam):
   LRESULT; stdcall;
 var
   DeviceContext: HDC;
@@ -168,6 +222,7 @@ end;
 
 var
   WindowClass: TWndClassEx;
+  &message: TMsg;
 
 begin
   var InstanceHandle := GetModuleHandle(nil);
@@ -201,16 +256,15 @@ begin
 
   Running := True;
 
-  var Msg: TMsg;
   while Running do
   begin
-    while PeekMessage(Msg, 0, 0, 0, PM_REMOVE) do
+    while PeekMessage(&message, 0, 0, 0, PM_REMOVE) do
     begin
-      if Msg.message = WM_QUIT then
+      if &message.message = WM_QUIT then
         Running := False;
 
-      TranslateMessage(Msg);
-      DispatchMessage(Msg);
+      TranslateMessage(&message);
+      DispatchMessage(&message);
     end;
   end;
 
