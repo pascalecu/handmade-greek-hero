@@ -43,7 +43,7 @@ begin
     VirtualFree(MemPtr, 0, MEM_RELEASE);
 end;
 
-function GetClientRectangle(Handle: hwnd): TRect;
+function GetClientRectangle(Handle: HWND): TRect;
 var
   Rect: TRect;
 begin
@@ -57,48 +57,46 @@ procedure Win32ResizeDIBSection(Width, Height: Integer);
 const
   BytesPerPixel = 4;
 begin
-  FreeMemory(BmpMemory);
-
-  BitmapWidth := Width;
-  BitmapHeight := Height;
-
-  ZeroMemory(@BmpInfo, SizeOf(BmpInfo));
-  with BmpInfo.BmiHeader do
+  if (BitmapWidth <> Width) or (BitmapHeight <> Height) then
   begin
-    biSize := SizeOf(BmpInfo.bmiHeader);
-    biWidth := BitmapWidth;
-    biHeight := -BitmapHeight;
-    biPlanes := 1;
-    biBitCount := 32;
-    biCompression := BI_RGB;
-  end;
+    FreeMemory(BmpMemory);
 
-  BmpMemory := AllocateMemory(BitmapWidth * BitmapHeight * BytesPerPixel);
+    BitmapWidth := Width;
+    BitmapHeight := Height;
 
-  var Pitch := Width * BytesPerPixel;
-
-  var Row := PByte(BmpMemory);
-  for var Y := 0 to Pred(BitmapHeight) do
-  begin
-    var Pixel := Row;
-    for var X := 0 to Pred(BitmapWidth) do
+    ZeroMemory(@BmpInfo, SizeOf(BmpInfo));
+    with BmpInfo.BmiHeader do
     begin
-      Pixel^ := X and $FF;
-      Inc(Pixel);
-
-      Pixel^ := Y and $FF;
-      Inc(Pixel);
-
-      Pixel^ := $FF;
-      Inc(Pixel);
-
-      Pixel^ := $00;
-      Inc(Pixel);
+      biSize := SizeOf(BmpInfo.bmiHeader);
+      biWidth := BitmapWidth;
+      biHeight := -BitmapHeight;
+      biPlanes := 1;
+      biBitCount := 32;
+      biCompression := BI_RGB;
     end;
-    Inc(Row, Pitch);
-  end;
 
-  DebugLog(Format('DIB Section created (%dx%d).', [Width, Height]));
+    BmpMemory := AllocateMemory(BitmapWidth * BitmapHeight * BytesPerPixel);
+
+    var Pitch := Width * BytesPerPixel;
+
+    var Row := PByte(BmpMemory);
+    for var Y := 0 to Pred(BitmapHeight) do
+    begin
+      var Pixel := PUint32(Row);
+      for var X := 0 to Pred(BitmapWidth) do
+      begin
+        var Red := Y and $FF;
+        var Green := X and $FF;
+        var Blue := $FF;
+
+        Pixel^ := Red shl 16 or Green shl 8 or Blue;
+        Inc(Pixel);
+      end;
+      Inc(Row, Pitch);
+    end;
+
+    DebugLog(Format('DIB Section created (%dx%d).', [Width, Height]));
+  end;
 end;
 
 procedure Win32ResizeBitmapIfNeeded(NewWidth, NewHeight: Integer);
@@ -152,7 +150,7 @@ begin
     BitmapWidth, BitmapHeight, BmpMemory, BmpInfo, DIB_RGB_COLORS, SRCCOPY);
 end;
 
-function WindowProc(Window: hwnd; Msg: UINT; WParam: WParam; LParam: LParam):
+function WindowProc(Window: HWND; Msg: UINT; WParam: WParam; LParam: LParam):
   LRESULT; stdcall;
 var
   DeviceContext: HDC;
@@ -169,13 +167,13 @@ begin
 
         Win32ResizeDIBSection(Width, Height);
 
-        DebugLog('WM_SIZE' + sLineBreak);
+        DebugLog('WM_SIZE');
         Result := 0;
       end;
 
     WM_DESTROY:
       begin
-        DebugLog('WM_DESTROY' + sLineBreak);
+        DebugLog('WM_DESTROY');
         Running := False;
         PostQuitMessage(0);
         Result := 0;
@@ -183,7 +181,7 @@ begin
 
     WM_CLOSE:
       begin
-        DebugLog('WM_CLOSE' + sLineBreak);
+        DebugLog('WM_CLOSE');
         DestroyWindow(Window);
         Result := 0;
       end;
@@ -203,15 +201,16 @@ begin
           Win32UpdateWindow(DeviceContext, ClientRect, Top, Left, Width, Height);
         finally
           EndPaint(Window, Paint);
+          Result := 0;
         end;
       end;
 
     WM_ACTIVATEAPP:
       begin
         if WParam <> 0 then
-          DebugLog('App activated' + sLineBreak)
+          DebugLog('App activated')
         else
-          DebugLog('App deactivated' + sLineBreak);
+          DebugLog('App deactivated');
 
         Result := 0;
       end;
@@ -220,12 +219,14 @@ begin
   end;
 end;
 
+procedure InitApplication;
 var
   WindowClass: TWndClassEx;
+  WindowHandle: HWND;
+  HInstance: UInt64;
   &message: TMsg;
-
 begin
-  var InstanceHandle := GetModuleHandle(nil);
+  HInstance := GetModuleHandle(nil);
 
   ZeroMemory(@WindowClass, SizeOf(WindowClass));
 
@@ -234,7 +235,7 @@ begin
     cbSize := SizeOf(WindowClass);
     Style := CS_HREDRAW or CS_VREDRAW or CS_OWNDC;
     lpfnWndProc := @WindowProc;
-    HInstance := InstanceHandle;
+    HInstance := HInstance;
     lpszClassName := 'HandmadeHeroWndClass';
   end;
 
@@ -244,9 +245,9 @@ begin
     Exit;
   end;
 
-  var WindowHandle := CreateWindowEx(0, WindowClass.lpszClassName,
-    'Handmade Hero', WS_OVERLAPPEDWINDOW or WS_VISIBLE, CW_USEDEFAULT,
-    CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, 0, 0, InstanceHandle, nil);
+  WindowHandle := CreateWindowEx(0, WindowClass.lpszClassName, 'Handmade Hero',
+    WS_OVERLAPPEDWINDOW or WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT,
+    CW_USEDEFAULT, CW_USEDEFAULT, 0, 0, HInstance, nil);
 
   if WindowHandle = 0 then
   begin
@@ -267,8 +268,15 @@ begin
       DispatchMessage(&message);
     end;
   end;
+end;
 
-  if BmpMemory <> nil then
-    VirtualFree(BmpMemory, 0, MEM_RELEASE);
+begin
+
+  try
+    InitApplication;
+  finally
+    if BmpMemory <> nil then
+      VirtualFree(BmpMemory, 0, MEM_RELEASE);
+  end;
 end.
 
