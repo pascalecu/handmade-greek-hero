@@ -2,6 +2,7 @@
 
 {$APPTYPE GUI}
 {$R *.res}
+{$POINTERMATH ON}
 
 uses
   System.SysUtils,
@@ -11,9 +12,8 @@ uses
 var
   Running: Boolean;
   BmpInfo: TBitmapInfo;
-  BitmapMemory: Pointer = nil;
-  BitmapHandle: HBITMAP = 0;
-  BitmapDeviceContext: HDC = 0;
+  BmpMemory: Pointer = nil;
+  BitmapWidth, BitmapHeight: Integer;
 
 procedure DebugLog(const Msg: string);
 begin
@@ -35,58 +35,65 @@ begin
 end;
 
 procedure Win32ResizeDIBSection(Width, Height: Integer);
+const
+  BytesPerPixel = 4;
 begin
-  if BitmapHandle <> 0 then
-  begin
-    DeleteObject(BitmapHandle);
-    BitmapHandle := 0;
-  end;
+  if BmpMemory <> nil then
+    VirtualFree(BmpMemory, 0, MEM_RELEASE);
 
-  if BitmapDeviceContext <> 0 then
-  begin
-    SelectObject(BitmapDeviceContext, 0);
-    DeleteDC(BitmapDeviceContext);
-    BitmapDeviceContext := 0;
-  end;
-
-  BitmapDeviceContext := CreateCompatibleDC(0);
-  if BitmapDeviceContext = 0 then
-  begin
-    DebugLog('Win32ResizeDIBSection: Failed to create compatible DC.');
-    Exit;
-  end;
+  BitmapWidth := Width;
+  BitmapHeight := Height;
 
   ZeroMemory(@BmpInfo, SizeOf(BmpInfo));
   with BmpInfo.BmiHeader do
   begin
     biSize := SizeOf(BmpInfo.bmiHeader);
-    biWidth := Width;
-    biHeight := -Height;
+    biWidth := BitmapWidth;
+    biHeight := -BitmapHeight;
     biPlanes := 1;
     biBitCount := 32;
     biCompression := BI_RGB;
   end;
 
-  BitmapMemory := nil;
-  BitmapHandle := CreateDIBSection(BitmapDeviceContext, BmpInfo, DIB_RGB_COLORS,
-    BitmapMemory, 0, 0);
+  BmpMemory := VirtualAlloc(nil, BitmapWidth * BitmapHeight * BytesPerPixel,
+    MEM_COMMIT, PAGE_READWRITE);
 
-  if BitmapHandle = 0 then
+  var Pitch := Width * BytesPerPixel;
+
+  var Row := PByte(BmpMemory);
+  for var Y := 0 to Pred(BitmapHeight) do
   begin
-    DebugLog('Win32ResizeDIBSection: Failed to create DIB section.');
-    DeleteDC(BitmapDeviceContext);
-    BitmapDeviceContext := 0;
-    Exit;
+    var Pixel := PByte(Row);
+    for var X := 0 to Pred(BitmapWidth) do
+    begin
+      Pixel^ := X and $FF;
+      Inc(Pixel);
+
+      Pixel^ := Y and $FF;
+      Inc(Pixel);
+
+      Pixel^ := $FF;
+      Inc(Pixel);
+
+      Pixel^ := $00;
+      Inc(Pixel);
+    end;
+    Row := Row + Pitch;
   end;
 
   DebugLog(Format('DIB Section created (%dx%d).', [Width, Height]));
 end;
 
-procedure Win32UpdateWindow(DeviceContext: HDC; Top, Left, Width, Height: Integer);
+procedure Win32UpdateWindow(DeviceContext: HDC; WindowRect: TRect; Top, Left,
+  Width, Height: Integer);
+var
+  WindowWidth, WindowHeight: Integer;
 begin
-  if BitmapMemory <> nil then
-    StretchDIBits(DeviceContext, Top, Left, Width, Height, 0, 0, Width, Height,
-      BitmapMemory, BmpInfo, DIB_RGB_COLORS, SRCCOPY)
+  WindowWidth := WindowRect.Right - WindowRect.Left;
+  WindowHeight := WindowRect.Bottom - WindowRect.Top;
+  if BmpMemory <> nil then
+    StretchDIBits(DeviceContext, 0, 0, BitmapWidth, BitmapHeight, 0, 0,
+      WindowWidth, WindowHeight, BmpMemory, BmpInfo, DIB_RGB_COLORS, SRCCOPY)
   else
     DebugLog('Win32UpdateWindow: Bitmap memory is nil. Update skipped.');
 end;
@@ -137,7 +144,9 @@ begin
           Height := Paint.RCPaint.Bottom - Paint.RCPaint.Top;
           Width := Paint.RCPaint.Right - Paint.RCPaint.Left;
 
-          Win32UpdateWindow(DeviceContext, Top, Left, Width, Height);
+          var ClientRect := GetClientRectangle(Window);
+
+          Win32UpdateWindow(DeviceContext, ClientRect, Top, Left, Width, Height);
         finally
           EndPaint(Window, Paint);
         end;
@@ -203,15 +212,7 @@ begin
     DispatchMessage(Msg);
   end;
 
-  if BitmapHandle <> 0 then
-    DeleteObject(BitmapHandle);
-
-  if BitmapDeviceContext <> 0 then
-    DeleteDC(BitmapDeviceContext);
-
-  BitmapMemory := nil;
-  BitmapHandle := 0;
-  BitmapDeviceContext := 0;
-
+  if BmpMemory <> nil then
+    VirtualFree(BmpMemory, 0, MEM_RELEASE);
 end.
 
